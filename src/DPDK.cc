@@ -1,6 +1,65 @@
 #include <unistd.h>
+#include <cstdlib>
+#include <cstring>
+#include <iostream>
+#include <cstdio>
+#include <getopt.h>
+#include <pcap/dlt.h>
+#include <sys/time.h>
+
+#include <rte_eal.h>
+#include <rte_ethdev.h>
+#include <rte_mbuf.h>
+#include <rte_mempool.h>
+#include <rte_ring.h>
+#include <rte_launch.h>
+#include <rte_lcore.h>
+#include <rte_debug.h>
+#include <rte_errno.h>
+#include <rte_string_fns.h>
 
 #include "DPDK.h"
+#include "zeek/iosource/Manager.h"
+#include "zeek/Reporter.h"
+#include "zeek/RunState.h"
+#include "zeek/util.h"
+
+// DPDK constants
+#define BURST_SIZE 32
+#define RX_RING_SIZE 1024
+#define NUM_MBUFS 8191
+#define MBUF_CACHE_SIZE 250
+#define JUMBO_FRAME_MAX_SIZE 9000
+#define MTU_OVERHEAD 18
+
+// DPDK API compatibility macros
+#ifndef RTE_ETH_MQ_RX_RSS
+#define RTE_ETH_MQ_RX_RSS ETH_MQ_RX_RSS
+#endif
+
+#ifndef RTE_ETH_RSS_NONFRAG_IPV4_TCP
+#define RTE_ETH_RSS_NONFRAG_IPV4_TCP ETH_RSS_NONFRAG_IPV4_TCP
+#define RTE_ETH_RSS_NONFRAG_IPV6_TCP ETH_RSS_NONFRAG_IPV6_TCP
+#define RTE_ETH_RSS_NONFRAG_IPV4_UDP ETH_RSS_NONFRAG_IPV4_UDP
+#define RTE_ETH_RSS_NONFRAG_IPV6_UDP ETH_RSS_NONFRAG_IPV6_UDP
+#define RTE_ETH_RSS_NONFRAG_IPV4_OTHER ETH_RSS_NONFRAG_IPV4_OTHER
+#define RTE_ETH_RSS_NONFRAG_IPV6_OTHER ETH_RSS_NONFRAG_IPV6_OTHER
+#define RTE_ETH_RSS_FRAG_IPV4 ETH_RSS_FRAG_IPV4
+#define RTE_ETH_RSS_FRAG_IPV6 ETH_RSS_FRAG_IPV6
+#endif
+
+struct worker_thread_args {
+    uint16_t port_id;
+    uint16_t queue_id;
+    struct rte_ring* ring;
+};
+
+// Global variables
+static struct rte_mempool* mbuf_pool = nullptr;
+static struct rte_ring* recv_ring = nullptr;
+static bool pkt_loop = true;
+static uint64_t queue_drops = 0;
+static int GrabPackets(void* args_ptr);
 
 namespace zeek::iosource
 	{
@@ -114,7 +173,7 @@ inline int DPDK::port_init(uint16_t port)
 	struct rte_eth_conf port_conf = {
 		.rxmode =
 			{
-				.mq_mode = ETH_MQ_RX_RSS,
+				.mq_mode = RTE_ETH_MQ_RX_RSS,
 #if RTE_VERSION >= RTE_VERSION_NUM(21,8,0,0)
 				.mtu = JUMBO_FRAME_MAX_SIZE,
 #else
@@ -129,10 +188,10 @@ inline int DPDK::port_init(uint16_t port)
 					{
 						.rss_key = rss_key,
 						.rss_key_len = 52,
-						.rss_hf = ETH_RSS_NONFRAG_IPV4_TCP | ETH_RSS_NONFRAG_IPV6_TCP |
-	                              ETH_RSS_NONFRAG_IPV4_UDP | ETH_RSS_NONFRAG_IPV6_UDP |
-	                              ETH_RSS_NONFRAG_IPV4_OTHER | ETH_RSS_NONFRAG_IPV6_OTHER |
-	                              ETH_RSS_FRAG_IPV4 | ETH_RSS_FRAG_IPV6,
+						.rss_hf = RTE_ETH_RSS_NONFRAG_IPV4_TCP | RTE_ETH_RSS_NONFRAG_IPV6_TCP |
+	                              RTE_ETH_RSS_NONFRAG_IPV4_UDP | RTE_ETH_RSS_NONFRAG_IPV6_UDP |
+	                              RTE_ETH_RSS_NONFRAG_IPV4_OTHER | RTE_ETH_RSS_NONFRAG_IPV6_OTHER |
+	                              RTE_ETH_RSS_FRAG_IPV4 | RTE_ETH_RSS_FRAG_IPV6,
 					},
 			},
 	};
@@ -214,13 +273,13 @@ inline int DPDK::port_init(uint16_t port)
 	retval = rte_eth_dev_set_mtu(port, port_conf.rxmode.mtu);
 
 	if ( retval != 0 )
-		reporter->Warning("Error during running eth_dev_set_mtu (port %u, mtu %lu) info: %s\n",
+		reporter->Warning("Error during running eth_dev_set_mtu (port %u, mtu %u) info: %s\n",
 		                  port, port_conf.rxmode.mtu, strerror(-retval));
 #else
 	if ( debug ) printf("Setting MTU: rte_eth_dev_set_mtu(%u, %u)\n", port, port_conf.rxmode.max_rx_pkt_len);
 	retval = rte_eth_dev_set_mtu(port, port_conf.rxmode.max_rx_pkt_len - MTU_OVERHEAD);
 	if ( retval != 0 )
-		reporter->Warning("Error during running eth_dev_set_mtu (port %u, mtu %lu) info: %s\n",
+		reporter->Warning("Error during running eth_dev_set_mtu (port %u, mtu %u) info: %s\n",
 		                  port, port_conf.rxmode.max_rx_pkt_len - MTU_OVERHEAD, strerror(-retval));
 #endif
 

@@ -3,20 +3,27 @@
 #include <inttypes.h>
 #include <net/if.h>
 #include <stdint.h>
-#include <sys/time.h>
+#include <ctime>
+#include <string>
 
-#include <rte_cycles.h>
 #include <rte_eal.h>
 #include <rte_ethdev.h>
 #include <rte_latencystats.h>
 #include <rte_lcore.h>
 #include <rte_mbuf.h>
 #include <rte_version.h>
+#include <rte_mempool.h>
+#include <rte_ring.h>
+#include <rte_vlan.h>
 
+#include <zeek/iosource/PktSrc.h>
+#include <zeek/Packet.h>
 #include <zeek/Dict.h>
-#include <zeek/Desc.h>
+#include <zeek/Val.h>
 #include <zeek/ID.h>
+#include <zeek/Reporter.h>
 #include <zeek/RunState.h>
+#include <zeek/util.h>
 
 // Should be 2**n - 1
 //#define NUM_MBUFS 32767
@@ -37,7 +44,7 @@
 /* allow max jumbo frame 9726 */
 #define JUMBO_FRAME_MAX_SIZE 0x2600
 
-#include "zeek/iosource/PktSrc.h"
+
 
 namespace zeek::iosource
 	{

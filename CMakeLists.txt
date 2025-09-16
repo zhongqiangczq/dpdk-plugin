@@ -24,7 +24,27 @@ else()
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=x86-64 -msse4.1 -msse3")
 endif()
 
-include_directories(/usr/include/x86_64-linux-gnu/dpdk /usr/include/dpdk)
+include_directories(/opt/zeek/include)
+
+# Use pkg-config to get DPDK configuration
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(DPDK REQUIRED libdpdk)
+
+# Add DPDK include directories and compile flags
+include_directories(${DPDK_INCLUDE_DIRS})
+add_compile_options(${DPDK_CFLAGS_OTHER})
+
+# Add DPDK preprocessor definitions
+add_definitions(-DRTE_CONFIG_H_INCLUDED)
+foreach(flag ${DPDK_CFLAGS_OTHER})
+    if(flag MATCHES "^-D")
+        add_definitions(${flag})
+    endif()
+endforeach()
+
+# Link DPDK libraries
+link_directories(${DPDK_LIBRARY_DIRS})
+set(DPDK_LIBRARIES ${DPDK_LIBRARIES})
 
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" VERSION LIMIT_COUNT 1)
 
