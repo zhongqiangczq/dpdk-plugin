@@ -1,0 +1,90 @@
+FROM ubuntu:noble
+
+# 避免交互式安装时的提示
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 更新包列表并安装基础依赖
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    pkg-config \
+    python3 \
+    python3-pip \
+    wget \
+    curl \
+    software-properties-common \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装DPDK依赖
+RUN apt-get update && apt-get install -y \
+    libnuma-dev \
+    libpcap-dev \
+    libssl-dev \
+    zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装DPDK
+RUN apt-get update && apt-get install -y \
+    dpdk \
+    dpdk-dev \
+    libdpdk-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装必要的工具
+RUN apt-get update && apt-get install -y \
+    curl \
+    gnupg \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装Zeek从官方仓库
+RUN echo 'deb http://download.opensuse.org/repositories/security:/zeek/xUbuntu_24.04/ /' | tee /etc/apt/sources.list.d/security:zeek.list \
+    && curl -fsSL https://download.opensuse.org/repositories/security:zeek/xUbuntu_24.04/Release.key | gpg --dearmor | tee /etc/apt/trusted.gpg.d/security_zeek.gpg > /dev/null \
+    && apt-get update \
+    && apt-get install -y zeek \
+    && rm -rf /var/lib/apt/lists/*
+
+# 设置环境变量
+ENV PATH="/usr/bin:$PATH"
+ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
+
+# 安装zkg并配置
+RUN pip3 install --break-system-packages zkg \
+    && zkg autoconfig --force \
+    && echo "Zeek package manager configured"
+
+# 安装dpdk的lib    
+RUN apt install libdpdk-dev
+# 安装dpdk-plugin
+RUN zkg install https://github.com/zhongqiangczq/dpdk-plugin.git --force \
+    && echo "DPDK plugin installed successfully"
+
+# 创建工作目录
+WORKDIR /workspace
+
+# 复制项目文件
+COPY . /workspace/
+
+# 设置编译脚本
+RUN echo '#!/bin/bash\n\
+set -e\n\
+echo "开始编译DPDK插件..."\n\
+echo "当前目录: $(pwd)"\n\
+echo "Zeek版本: $(zeek --version)"\n\
+echo "DPDK版本: $(pkg-config --modversion libdpdk)"\n\
+echo ""\n\
+echo "清理之前的构建..."\n\
+rm -rf build\n\
+echo ""\n\
+echo "开始配置和编译..."\n\
+make\n\
+echo ""\n\
+echo "编译完成!"\n\
+echo "生成的插件文件:"\n\
+find build -name "*.so" -o -name "*.tgz" | head -10\n' > /workspace/build.sh
+
+RUN chmod +x /workspace/build.sh
+
+# 默认命令
+CMD ["/workspace/build.sh"]

@@ -1,0 +1,22 @@
+# macOS文件系统扩展属性文件
+._*
+.DS_Store
+
+# 构建目录
+build/
+
+# Git目录
+.git/
+
+# IDE文件
+.vscode/
+.idea/
+
+# 临时文件
+*.tmp
+*.log
+
+# 其他不需要的文件
+*.swp
+*.swo
+*~
